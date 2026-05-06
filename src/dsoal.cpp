@@ -285,7 +285,11 @@ ComPtr<IMMDevice> GetMMDevice(ComWrapper&, EDataFlow flow, const GUID &id)
         }
 
         GUID devid{};
-        CLSIDFromString(pv.value<const WCHAR*>(), &devid);
+        if(const auto parsehr = CLSIDFromString(pv.value<const WCHAR*>(), &devid); FAILED(parsehr))
+        {
+            WARN("CLSIDFromString failed: {:08x}", as_unsigned(parsehr));
+            continue;
+        }
         if(id == devid) return device;
     }
 
