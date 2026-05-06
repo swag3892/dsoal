@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <format>
 #include <functional>
@@ -80,7 +81,14 @@ auto GetDSBCapsString(DWORD flags) -> std::string
     {
         if(!ret.empty())
             ret += " | ";
-        std::format_to(std::back_inserter(ret), "{:#x}", flags);
+        ret += "0x";
+        const auto start = ret.size();
+        ret.resize(start + 2*sizeof(flags));
+        if(const auto conv = std::to_chars(ret.data()+start, ret.data()+ret.size(), flags, 16);
+            conv.ec == std::errc{})
+            ret.resize(static_cast<size_t>(conv.ptr - ret.data()));
+        else
+            ret.resize(start);
     }
 
     return ret;
@@ -240,7 +248,7 @@ ds::expected<std::unique_ptr<SharedDevice>,HRESULT> CreateDeviceShare(const GUID
     std::bitset<ExtensionCount> extensions{};
     for(auto &ext : sExtensionList)
     {
-        if(std::string_view{ext.name}.substr(0,3) == "ALC")
+        if(std::string_view{ext.name}.starts_with("ALC"))
         {
             if(alcIsExtensionPresent(aldev.get(), ext.name))
             {
