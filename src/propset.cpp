@@ -31,7 +31,7 @@ auto DSPROPERTY_descWtoA(const DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA *
         nullptr);
     const auto desclen = WideCharToMultiByte(CP_ACP, 0, dataW->Description, -1, nullptr, 0,
         nullptr, nullptr);
-    if(modlen < 0 || desclen < 0)
+    if(modlen == 0 || desclen == 0)
         return false;
 
     /* NOLINTBEGIN(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc) */
@@ -52,9 +52,24 @@ auto DSPROPERTY_descWtoA(const DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA *
     }
     /* NOLINTEND(cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc) */
 
-    WideCharToMultiByte(CP_ACP, 0, dataW->Module, -1, dataA->Module, modlen, nullptr, nullptr);
-    WideCharToMultiByte(CP_ACP, 0, dataW->Description, -1, dataA->Description, desclen, nullptr,
-        nullptr);
+    if(WideCharToMultiByte(CP_ACP, 0, dataW->Module, -1, dataA->Module, modlen, nullptr,
+        nullptr) == 0)
+    {
+        free(dataA->Module);
+        dataA->Module = nullptr;
+        free(dataA->Description);
+        dataA->Description = nullptr;
+        return false;
+    }
+    if(WideCharToMultiByte(CP_ACP, 0, dataW->Description, -1, dataA->Description, desclen,
+        nullptr, nullptr) == 0)
+    {
+        free(dataA->Module);
+        dataA->Module = nullptr;
+        free(dataA->Description);
+        dataA->Description = nullptr;
+        return false;
+    }
     return true;
 }
 
@@ -153,7 +168,7 @@ auto DSPROPERTY_WaveDeviceMappingA(void *pPropData, ULONG cbPropData, ULONG *pcb
     }
 
     const auto slen = MultiByteToWideChar(CP_ACP, 0, ppd->DeviceName, -1, nullptr, 0);
-    if(slen < 0)
+    if(slen == 0)
     {
         WARN("Failed to convert device name");
         return DSERR_INVALIDPARAM;
@@ -163,7 +178,11 @@ auto DSPROPERTY_WaveDeviceMappingA(void *pPropData, ULONG cbPropData, ULONG *pcb
     auto data = DSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_W_DATA{};
     data.DataFlow = ppd->DataFlow;
     data.DeviceName = namestore.data();
-    MultiByteToWideChar(CP_ACP, 0, ppd->DeviceName, -1, data.DeviceName, slen);
+    if(MultiByteToWideChar(CP_ACP, 0, ppd->DeviceName, -1, data.DeviceName, slen) == 0)
+    {
+        WARN("Failed to convert device name");
+        return DSERR_INVALIDPARAM;
+    }
 
     const auto hr = DSPROPERTY_WaveDeviceMappingW(&data, cbPropData, nullptr);
     if(SUCCEEDED(hr))
