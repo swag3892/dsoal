@@ -34,18 +34,6 @@ using cvoidp = const void*;
 enum class SampleType { UInt8, Int16, Float32 };
 enum class ChannelConfig { Mono, Stereo, Quad, X51, X71 };
 
-// Some legacy DirectSound games pass out-of-range cone values. Clamp them so
-// OpenAL receives valid parameters and the source keeps updating.
-auto sanitize_cone_angle(DWORD angle) noexcept -> DWORD
-{
-    return std::min(angle, static_cast<DWORD>(DS3D_MAXCONEANGLE));
-}
-
-auto sanitize_cone_outside_volume(LONG volume) noexcept -> LONG
-{
-    return std::clamp(volume, static_cast<LONG>(DSBVOLUME_MIN), static_cast<LONG>(DSBVOLUME_MAX));
-}
-
 #define PREFIX "ConvertFormat "
 auto ConvertFormat(WAVEFORMATEXTENSIBLE &dst, WAVEFORMATEX const &src) noexcept
     -> std::optional<std::pair<SampleType,ChannelConfig>>
@@ -1755,27 +1743,37 @@ HRESULT STDMETHODCALLTYPE Buffer::Buffer3D::SetAllParameters(const DS3DBUFFER *d
         return DSERR_INVALIDPARAM;
     }
 
-    auto params = *ds3dBuffer;
-    params.dwInsideConeAngle = sanitize_cone_angle(params.dwInsideConeAngle);
-    params.dwOutsideConeAngle = sanitize_cone_angle(params.dwOutsideConeAngle);
-    params.lConeOutsideVolume = sanitize_cone_outside_volume(params.lConeOutsideVolume);
-
-    if(!(params.flMinDistance >= 0.0f))
+    if(ds3dBuffer->dwInsideConeAngle > DS3D_MAXCONEANGLE
+        || ds3dBuffer->dwOutsideConeAngle > DS3D_MAXCONEANGLE)
     {
-        WARN("Invalid min distance ({:f})", params.flMinDistance);
+        WARN("Invalid cone angles ({}, {})", ds3dBuffer->dwInsideConeAngle,
+            ds3dBuffer->dwOutsideConeAngle);
         return DSERR_INVALIDPARAM;
     }
 
-    if(!(params.flMaxDistance >= 0.0f))
+    if(ds3dBuffer->lConeOutsideVolume > DSBVOLUME_MAX
+        || ds3dBuffer->lConeOutsideVolume < DSBVOLUME_MIN)
     {
-        WARN("Invalid max distance ({:f})", params.flMaxDistance);
+        WARN("Invalid cone outside volume ({})", ds3dBuffer->lConeOutsideVolume);
         return DSERR_INVALIDPARAM;
     }
 
-    if(params.dwMode != DS3DMODE_NORMAL && params.dwMode != DS3DMODE_HEADRELATIVE
-        && params.dwMode != DS3DMODE_DISABLE)
+    if(!(ds3dBuffer->flMinDistance >= 0.0f))
     {
-        WARN("Invalid mode ({})", params.dwMode);
+        WARN("Invalid min distance ({:f})", ds3dBuffer->flMinDistance);
+        return DSERR_INVALIDPARAM;
+    }
+
+    if(!(ds3dBuffer->flMaxDistance >= 0.0f))
+    {
+        WARN("Invalid max distance ({:f})", ds3dBuffer->flMaxDistance);
+        return DSERR_INVALIDPARAM;
+    }
+
+    if(ds3dBuffer->dwMode != DS3DMODE_NORMAL && ds3dBuffer->dwMode != DS3DMODE_HEADRELATIVE
+        && ds3dBuffer->dwMode != DS3DMODE_DISABLE)
+    {
+        WARN("Invalid mode ({})", ds3dBuffer->dwMode);
         return DSERR_INVALIDPARAM;
     }
 
@@ -1783,13 +1781,13 @@ HRESULT STDMETHODCALLTYPE Buffer::Buffer3D::SetAllParameters(const DS3DBUFFER *d
     auto const lock = std::lock_guard{self->mMutex};
     if(apply == DS3D_DEFERRED)
     {
-        self->mDeferred = params;
+        self->mDeferred = *ds3dBuffer;
         self->mDeferred.dwSize = sizeof(self->mDeferred);
         self->mDirty.set();
     }
     else
     {
-        self->setParams(params, ~0ull);
+        self->setParams(*ds3dBuffer, ~0ull);
         alGetErrorDirect(self->mContext);
     }
 
@@ -1802,8 +1800,11 @@ HRESULT STDMETHODCALLTYPE Buffer::Buffer3D::SetConeAngles(DWORD insideConeAngle,
 {
     DEBUG("({})->({}, {}, {})", voidp{this}, insideConeAngle, outsideConeAngle, apply);
 
-    insideConeAngle = sanitize_cone_angle(insideConeAngle);
-    outsideConeAngle = sanitize_cone_angle(outsideConeAngle);
+    if(insideConeAngle > DS3D_MAXCONEANGLE || outsideConeAngle > DS3D_MAXCONEANGLE)
+    {
+        WARN("Invalid cone angles ({}, {})", insideConeAngle, outsideConeAngle);
+        return DSERR_INVALIDPARAM;
+    }
 
     auto self = impl_from_base();
     auto const lock = std::lock_guard{self->mMutex};
@@ -1867,7 +1868,11 @@ HRESULT STDMETHODCALLTYPE Buffer::Buffer3D::SetConeOutsideVolume(LONG coneOutsid
 {
     DEBUG("({})->({}, {})", voidp{this}, coneOutsideVolume, apply);
 
-    coneOutsideVolume = sanitize_cone_outside_volume(coneOutsideVolume);
+    if(coneOutsideVolume > DSBVOLUME_MAX || coneOutsideVolume < DSBVOLUME_MIN)
+    {
+        WARN("Invalid cone outside volume ({})", coneOutsideVolume);
+        return DSERR_INVALIDPARAM;
+    }
 
     auto self = impl_from_base();
     auto const lock = std::lock_guard{self->mMutex};
